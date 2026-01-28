@@ -374,7 +374,7 @@ export default function Products({ searchQuery = '' }: ProductsProps) {
 
             {showForm && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
-                    <div className="bg-[var(--bg-panel)] w-full max-w-lg rounded-3xl border border-[var(--border-subtle)] p-6 md:p-8 shadow-2xl relative overflow-hidden animate-in zoom-in-95 slide-in-from-bottom-5 duration-300">
+                    <div className="bg-[var(--bg-panel)] w-full max-w-[95%] sm:max-w-lg max-h-[90vh] overflow-y-auto rounded-3xl border border-[var(--border-subtle)] p-5 md:p-8 shadow-2xl relative animate-in zoom-in-95 slide-in-from-bottom-5 duration-300 custom-scrollbar">
                         {/* Glow effects */}
                         <div className="absolute top-0 right-0 w-64 h-64 bg-brand-orange/5 rounded-full blur-3xl pointer-events-none -translate-y-1/2 translate-x-1/2" />
 
@@ -485,7 +485,7 @@ export default function Products({ searchQuery = '' }: ProductsProps) {
 
             {showAdjustModal && selectedProduct && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
-                    <div className="bg-[var(--bg-panel)] w-full max-w-md rounded-3xl p-8 shadow-2xl animate-in zoom-in-95 border border-[var(--border-subtle)]">
+                    <div className="bg-[var(--bg-panel)] w-full max-w-[95%] sm:max-w-md max-h-[90vh] overflow-y-auto rounded-3xl p-6 md:p-8 shadow-2xl animate-in zoom-in-95 border border-[var(--border-subtle)] custom-scrollbar">
                         <div className="flex items-center justify-between mb-6">
                             <h2 className="text-xl font-bold text-[var(--text-main)] tracking-tight">
                                 {isQuickSell ? t('quickSell') : t('stockAdjust')}
@@ -577,7 +577,7 @@ export default function Products({ searchQuery = '' }: ProductsProps) {
 
             {confirmQuickSell && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md animate-in fade-in duration-300">
-                    <div className="bg-[var(--bg-panel)] w-full max-w-sm rounded-[32px] p-8 shadow-2xl border border-[var(--border-subtle)] animate-in zoom-in-95">
+                    <div className="bg-[var(--bg-panel)] w-full max-w-[95%] sm:max-w-sm rounded-[32px] p-6 md:p-8 shadow-2xl border border-[var(--border-subtle)] animate-in zoom-in-95">
                         <div className="flex flex-col items-center text-center">
                             <div className="w-16 h-16 bg-orange-100 rounded-2xl flex items-center justify-center mb-6 text-[#FF4700]">
                                 <ShoppingCart className="w-8 h-8" />
