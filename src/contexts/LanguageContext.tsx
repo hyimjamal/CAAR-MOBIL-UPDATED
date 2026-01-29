@@ -318,7 +318,7 @@ const translations: Translations = {
     newProduct: { pt: 'Novo Produto', en: 'New Product', sw: 'Bidhaa Mpya' },
     requestSent: { pt: 'Solicitação enviada com sucesso! Ao admin aguarde um instante', en: 'Request sent successfully! Admin will review shortly', sw: 'Ombi limetumwa kwa mafanikio! Msimamizi atalikagua hivi karibuni' },
     errorSendingRequest: { pt: 'Erro ao enviar solicitação', en: 'Error sending request', sw: 'Hitilafu kutuma ombi' },
-    requestApproved: { pt: 'Solicitação aprovada!', en: 'Request approved!', sw: 'Ombi limekubaliwa!' },
+    requestApproved: { pt: 'Registado com sucesso!', en: 'Registered successfully!', sw: 'Imesajiliwa kwa mafanikio!' },
     errorApproving: { pt: 'Erro ao aprovar solicitação', en: 'Error approving request', sw: 'Hitilafu kukubali ombi' },
     requestRejected: { pt: 'Solicitação rejeitada', en: 'Request rejected', sw: 'Ombi limekataliwa' },
     errorRejecting: { pt: 'Erro ao rejeitar solicitação', en: 'Error rejecting request', sw: 'Hitilafu kukataa ombi' },

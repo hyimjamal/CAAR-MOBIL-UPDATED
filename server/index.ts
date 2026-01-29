@@ -514,10 +514,10 @@ app.post('/api/products/adjust-stock', async (req, res) => {
                 }
             });
 
-            // 6. Create Financial Transaction (Only if isFinancial or exit)
-            // Note: type='exit' (stock removal) is typically a Sale (Income)
+            // 6. Create Financial Transaction (Only if requested)
+            // type='exit' (stock removal) is typically a Sale (Income)
             // type='entry' (stock addition) is typically a Purchase (Expense)
-            if (isFinancial || type === 'exit') {
+            if (isFinancial) {
                 await tx.transaction.create({
                     data: {
                         type: type === 'exit' ? 'income' : 'expense',
@@ -620,6 +620,21 @@ app.post('/api/permission-requests', async (req, res) => {
             return res.status(400).json({ error: 'Campos obrigatórios ausentes' });
         }
 
+        // Prevent duplicate pending requests for the same target and type
+        if (targetId) {
+            const existingPending = await prisma.permissionRequest.findFirst({
+                where: {
+                    targetId,
+                    type,
+                    status: 'pending'
+                }
+            });
+
+            if (existingPending) {
+                return res.status(400).json({ error: 'Já existe uma solicitação pendente para este item. Aguarde a aprovação do administrador.' });
+            }
+        }
+
         const request = await prisma.permissionRequest.create({
             data: {
                 userId,
@@ -676,19 +691,30 @@ app.patch('/api/permission-requests/:id', async (req, res) => {
         const request = await prisma.permissionRequest.findUnique({ where: { id } });
         if (!request) return res.status(404).json({ error: 'Solicitação não encontrada' });
 
+        if (request.status !== 'pending') {
+            return res.status(400).json({ error: 'Esta solicitação já foi processada anteriormente.' });
+        }
+
         if (status === 'approved') {
             const details = JSON.parse(request.details);
 
             // Execute the requested action using a transaction for consistency
             await prisma.$transaction(async (tx) => {
-                const productFields = ['name', 'category', 'price', 'costPrice', 'stock', 'minStock', 'image_url', 'status', 'isDeleted'];
-                const sanitizedDetails: any = {};
-                productFields.forEach(field => {
-                    if (details[field] !== undefined) sanitizedDetails[field] = details[field];
-                });
-
                 if (request.type === 'CREATE_PRODUCT') {
-                    const newProduct = await tx.product.create({ data: sanitizedDetails });
+                    // Extract fields safely
+                    const { name, category, price, costPrice, stock, minStock, image_url } = details;
+                    const newProduct = await tx.product.create({
+                        data: {
+                            name,
+                            category,
+                            price: parseFloat(price),
+                            costPrice: parseFloat(costPrice || '0'),
+                            stock: parseInt(stock),
+                            minStock: parseInt(minStock || '5'),
+                            image_url: image_url || '',
+                            status: parseInt(stock) > 0 ? 'active' : 'out_of_stock'
+                        }
+                    });
 
                     // Side effect: Initial stock movement if > 0
                     if (newProduct.stock > 0) {
@@ -719,10 +745,25 @@ app.patch('/api/permission-requests/:id', async (req, res) => {
                     }
                 } else if (request.type === 'UPDATE_PRODUCT' && request.targetId) {
                     const oldProduct = await tx.product.findUnique({ where: { id: request.targetId } });
+
                     if (oldProduct) {
+                        // Use details directly but exclude internal keys
+                        const { _reason, id, ...updateFields } = details;
+
+                        // Parse numeric fields if they come as strings
+                        if (updateFields.price) updateFields.price = parseFloat(updateFields.price);
+                        if (updateFields.costPrice) updateFields.costPrice = parseFloat(updateFields.costPrice);
+                        if (updateFields.stock) updateFields.stock = parseInt(updateFields.stock);
+                        if (updateFields.minStock) updateFields.minStock = parseInt(updateFields.minStock);
+
+                        // Ensure status updates if stock changes to 0 or positive
+                        if (updateFields.stock !== undefined) {
+                            updateFields.status = updateFields.stock > 0 ? 'active' : 'out_of_stock';
+                        }
+
                         const updatedProduct = await tx.product.update({
                             where: { id: request.targetId },
-                            data: sanitizedDetails
+                            data: updateFields
                         });
 
                         const stockDiff = (updatedProduct.stock || 0) - (oldProduct.stock || 0);
@@ -779,7 +820,8 @@ app.patch('/api/permission-requests/:id', async (req, res) => {
                         data: { isDeleted: true }
                     });
                 } else if (request.type === 'CREATE_SERVICE') {
-                    const { parts, price, clientName, deviceModel, ...serviceData } = sanitizedDetails;
+                    // Use details directly as sanitizedDetails filters out service fields
+                    const { parts, price, clientName, deviceModel, description, ...serviceData } = details;
 
                     // 1. Calculate parts total cost
                     let totalPartsCost = 0;
@@ -821,12 +863,15 @@ app.patch('/api/permission-requests/:id', async (req, res) => {
                     // 2. Create Service Order
                     const serviceOrder = await tx.serviceOrder.create({
                         data: {
-                            ...serviceData,
                             clientName,
                             deviceModel,
+                            description,
                             price: parseFloat(price),
                             cost: totalPartsCost,
                             status: 'pending',
+                            imageUrl: details.imageUrl,
+                            frontImageUrl: details.frontImageUrl,
+                            backImageUrl: details.backImageUrl,
                             parts: {
                                 create: servicePartsData
                             }
@@ -840,7 +885,7 @@ app.patch('/api/permission-requests/:id', async (req, res) => {
                                 type: 'income',
                                 amount: serviceOrder.price,
                                 costAmount: totalPartsCost,
-                                description: `Serviço: ${serviceOrder.deviceModel} - ${serviceOrder.clientName} (Aprovado)`,
+                                description: `Serviço [ID:${serviceOrder.id}]: ${serviceOrder.deviceModel} - ${serviceOrder.clientName}`,
                                 clientName: serviceOrder.clientName,
                                 category: 'Serviço de Reparo',
                                 status: 'pending',
@@ -850,21 +895,71 @@ app.patch('/api/permission-requests/:id', async (req, res) => {
                         });
                     }
                 } else if (request.type === 'UPDATE_SERVICE' && request.targetId) {
-                    await tx.serviceOrder.update({
-                        where: { id: request.targetId },
-                        data: sanitizedDetails
-                    });
+                    const { clientName, deviceModel, description, price, imageUrl, frontImageUrl, backImageUrl, status } = details;
+
+                    const oldService = await tx.serviceOrder.findUnique({ where: { id: request.targetId } });
+
+                    if (oldService) {
+                        const updatedService = await tx.serviceOrder.update({
+                            where: { id: request.targetId },
+                            data: {
+                                clientName: clientName || oldService.clientName,
+                                deviceModel: deviceModel || oldService.deviceModel,
+                                description: description || oldService.description,
+                                price: price !== undefined ? parseFloat(price) : oldService.price,
+                                imageUrl: imageUrl || oldService.imageUrl,
+                                frontImageUrl: frontImageUrl || oldService.frontImageUrl,
+                                backImageUrl: backImageUrl || oldService.backImageUrl,
+                                status: status || oldService.status,
+                                delivered_at: (status === 'delivered' && oldService.status !== 'delivered') ? new Date() : oldService.delivered_at
+                            }
+                        });
+
+                        // Sync Financial Transaction
+                        const oldDescriptionBase = `${oldService.deviceModel} - ${oldService.clientName}`;
+                        const transUpdateData: any = {};
+
+                        // Update description/amount/client if changed
+                        if (deviceModel || clientName || price !== undefined) {
+                            const newModel = deviceModel || updatedService.deviceModel;
+                            const newClient = clientName || updatedService.clientName;
+                            transUpdateData.description = `Serviço [ID:${updatedService.id}]: ${newModel} - ${newClient}`;
+                            transUpdateData.clientName = newClient;
+                            if (price !== undefined) transUpdateData.amount = parseFloat(price);
+                        }
+
+                        // Update status if delivered
+                        if (status === 'delivered') {
+                            transUpdateData.status = 'paid';
+                            transUpdateData.date = new Date();
+                        }
+
+                        if (Object.keys(transUpdateData).length > 0) {
+                            const targetTransaction = await tx.transaction.findFirst({
+                                where: {
+                                    description: { contains: `ID:${updatedService.id}` },
+                                    category: 'Serviço de Reparo',
+                                    status: 'pending'
+                                }
+                            });
+
+                            if (targetTransaction) {
+                                await tx.transaction.update({
+                                    where: { id: targetTransaction.id },
+                                    data: transUpdateData
+                                });
+                            }
+                        }
+                    }
                 } else if (request.type === 'DELETE_SERVICE' && request.targetId) {
-                    // Delete related parts first
                     await tx.servicePart.deleteMany({
                         where: { serviceOrderId: request.targetId }
                     });
-                    // Delete the service order
                     await tx.serviceOrder.delete({
                         where: { id: request.targetId }
                     });
                 } else if (request.type === 'UPDATE_SERVICE_STATUS' && request.targetId) {
-                    const { status } = sanitizedDetails;
+                    const { status } = details;
                     const service = await tx.serviceOrder.update({
                         where: { id: request.targetId },
                         data: {
@@ -874,17 +969,23 @@ app.patch('/api/permission-requests/:id', async (req, res) => {
                     });
 
                     if (status === 'delivered') {
-                        await tx.transaction.updateMany({
+                        const targetTransaction = await tx.transaction.findFirst({
                             where: {
-                                description: { contains: `${service.deviceModel} - ${service.clientName}` },
+                                description: { contains: `ID:${request.targetId}` },
                                 category: 'Serviço de Reparo',
                                 status: 'pending'
-                            },
-                            data: {
-                                status: 'paid',
-                                date: new Date()
                             }
                         });
+
+                        if (targetTransaction) {
+                            await tx.transaction.update({
+                                where: { id: targetTransaction.id },
+                                data: {
+                                    status: 'paid',
+                                    date: new Date()
+                                }
+                            });
+                        }
                     }
                 }
             });
@@ -934,7 +1035,8 @@ app.patch('/api/permission-requests/:id', async (req, res) => {
 
         const updatedRequest = await prisma.permissionRequest.update({
             where: { id },
-            data: { status }
+            data: { status },
+            include: { user: { select: { name: true, role: true } } }
         });
 
         invalidateAnalyticsCache();
@@ -998,6 +1100,62 @@ app.post('/api/transactions', async (req, res) => {
     } catch (error) {
         console.error('Error creating transaction:', error);
         res.status(500).json({ error: 'Error creating transaction' });
+    }
+});
+
+app.patch('/api/transactions/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const requesterId = req.headers['x-user-id'] as string;
+        const requester = await prisma.user.findUnique({ where: { id: requesterId || '' } });
+
+        if (requester?.role !== 'admin') {
+            return res.status(403).json({ error: 'Acesso negado: Somente administradores podem editar transações financeiras' });
+        }
+
+        const { amount, date, dueDate, description, category, type, status, paymentMethod, clientName } = req.body;
+
+        const oldTransaction = await prisma.transaction.findUnique({ where: { id } });
+        if (!oldTransaction) return res.status(404).json({ error: 'Transação não encontrada' });
+
+        const transactionAmount = amount !== undefined ? parseFloat(amount) : undefined;
+
+        // Validation for expenses outpacing balance is complex on update, skipping strict check for admin edits to allow corrections
+
+        const updatedTransaction = await prisma.transaction.update({
+            where: { id },
+            data: {
+                amount: transactionAmount,
+                description,
+                category,
+                type,
+                status,
+                paymentMethod,
+                clientName,
+                date: date ? new Date(date) : undefined,
+                dueDate: dueDate ? new Date(dueDate) : undefined
+            }
+        });
+
+        if (requesterId) {
+            let changes = [];
+            if (oldTransaction.amount !== updatedTransaction.amount) changes.push(`Valor: ${oldTransaction.amount} -> ${updatedTransaction.amount}`);
+            if (oldTransaction.description !== updatedTransaction.description) changes.push(`Desc: ${updatedTransaction.description}`);
+            if (oldTransaction.status !== updatedTransaction.status) changes.push(`Status: ${oldTransaction.status} -> ${updatedTransaction.status}`);
+
+            await createLog(
+                requesterId,
+                'FINANCE_UPDATE',
+                'FINANCE',
+                `Editou transação: ${changes.join(' | ') || 'Detalhes gerais'}`
+            );
+        }
+
+        io.emit('data-updated', { type: 'transactions', action: 'update' });
+        res.json(updatedTransaction);
+    } catch (error) {
+        console.error('Error updating transaction:', error);
+        res.status(500).json({ error: 'Erro ao atualizar transação' });
     }
 });
 
@@ -1229,7 +1387,7 @@ app.post('/api/services', async (req, res) => {
                         type: 'income',
                         amount: serviceOrder.price,
                         costAmount: totalPartsCost,
-                        description: `Serviço: ${serviceOrder.deviceModel} - ${serviceOrder.clientName}`,
+                        description: `Serviço [ID:${serviceOrder.id}]: ${serviceOrder.deviceModel} - ${serviceOrder.clientName}`,
                         clientName: serviceOrder.clientName,
                         category: 'Serviço de Reparo',
                         status: status === 'delivered' ? 'paid' : 'pending',
@@ -1267,50 +1425,102 @@ app.patch('/api/services/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const { status, clientName, clientPhone, deviceModel, description, price, imageUrl, frontImageUrl, backImageUrl } = req.body;
+        const updaterId = req.headers['x-user-id'] as string;
 
-        const service = await prisma.serviceOrder.update({
-            where: { id },
-            data: {
-                status,
-                clientName,
-                clientPhone,
-                deviceModel,
-                description,
-                price: price !== undefined ? parseFloat(price) : undefined,
-                imageUrl,
-                frontImageUrl,
-                backImageUrl,
-                delivered_at: status === 'delivered' ? new Date() : undefined
-            }
-        });
+        const result = await prisma.$transaction(async (tx) => {
+            // 1. Fetch current service state to identify related transactions
+            const oldService = await tx.serviceOrder.findUnique({ where: { id } });
+            if (!oldService) throw new Error('Serviço não encontrado');
 
-        if (status === 'delivered') {
-            await prisma.transaction.updateMany({
-                where: {
-                    description: { contains: `${service.deviceModel} - ${service.clientName}` },
-                    category: 'Serviço de Reparo',
-                    status: 'pending' // Only update if still pending
-                },
+            // 2. Update service
+            const updatedService = await tx.serviceOrder.update({
+                where: { id },
                 data: {
-                    status: 'paid',
-                    date: new Date() // Set payment date to now
+                    status,
+                    clientName,
+                    clientPhone,
+                    deviceModel,
+                    description,
+                    price: price !== undefined ? parseFloat(price) : undefined,
+                    imageUrl,
+                    frontImageUrl,
+                    backImageUrl,
+                    delivered_at: status === 'delivered' ? new Date() : undefined
                 }
             });
+
+            // 3. Sync Financial Transaction
+            // We search for the transaction using the OLD details to ensure we find it even if details changed
+            // We search for both authorized and regular variants
+            const oldDescriptionBase = `${oldService.deviceModel} - ${oldService.clientName}`;
+
+            const transUpdateData: any = {};
+
+            // If details changed, update transaction description and amount
+            if (deviceModel || clientName || price !== undefined) {
+                const newModel = deviceModel || updatedService.deviceModel;
+                const newClient = clientName || updatedService.clientName;
+                transUpdateData.description = `Serviço: ${newModel} - ${newClient}`;
+                transUpdateData.clientName = newClient;
+                if (price !== undefined) {
+                    transUpdateData.amount = parseFloat(price);
+                }
+            }
+
+            // If status changed to delivered, mark as paid
+            if (status === 'delivered') {
+                transUpdateData.status = 'paid';
+                transUpdateData.date = new Date(); // Update date to now when paid
+            }
+
+            if (Object.keys(transUpdateData).length > 0) {
+                // Find and update a SINGLE pending transaction to prevent bulk updates
+                const targetTransaction = await tx.transaction.findFirst({
+                    where: {
+                        description: { contains: oldDescriptionBase },
+                        category: 'Serviço de Reparo',
+                        status: 'pending'
+                    }
+                });
+
+                if (targetTransaction) {
+                    await tx.transaction.update({
+                        where: { id: targetTransaction.id },
+                        data: transUpdateData
+                    });
+                }
+            }
+
+            return { service: updatedService, oldService };
+        });
+
+        const { service, oldService } = result;
+
+        // Broadcast updates
+        if (status === 'delivered') {
             io.emit('data-updated', { type: 'transactions', action: 'update' });
         }
+        io.emit('data-updated', { type: 'services', action: 'update' });
 
         // Create log for status change
-        const updaterId = req.headers['x-user-id'] as string;
         if (updaterId) {
+            let logDetails = `Atualizou serviço ${service.deviceModel}`;
+            if (status && status !== oldService.status) {
+                logDetails += ` | Status: ${oldService.status} -> ${status}`;
+                if (status === 'delivered') logDetails += ` (Receita Contabilizada: MT ${service.price})`;
+            }
+            if (price && parseFloat(price) !== oldService.price) {
+                logDetails += ` | Preço: ${oldService.price} -> ${price}`;
+            }
+
             await createLog(
                 updaterId,
                 'SERVICE_UPDATE',
                 'SERVICES',
-                `Atualizou status do serviço ${service.deviceModel} para ${status}`
+                logDetails
             );
         }
 
-        io.emit('data-updated', { type: 'services', action: 'update' });
         res.json({ ...service, createdAt: service.created_at.toISOString() });
     } catch (error) {
         console.error('Error updating service:', error);
@@ -1396,12 +1606,12 @@ app.get('/api/stats', async (req, res) => {
         // Cumulative Metrics (Usually focus on REALized flow)
         const paidTransactions = transactions.filter(t => t.status === 'paid');
 
-        const serviceRevenue = transactions
-            .filter(t => t.type === 'income' && t.category === 'Serviço de Reparo')
+        const serviceRevenue = paidTransactions
+            .filter(t => t.category === 'Serviço de Reparo')
             .reduce((sum, t) => sum + t.amount, 0);
 
-        const productRevenue = transactions
-            .filter(t => t.type === 'income' && t.category === 'Venda de Produto')
+        const productRevenue = paidTransactions
+            .filter(t => t.category === 'Venda de Produto')
             .reduce((sum, t) => sum + t.amount, 0);
 
         const todayServiceRevenue = todayTransactions

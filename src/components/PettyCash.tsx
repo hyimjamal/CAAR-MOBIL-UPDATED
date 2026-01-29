@@ -17,7 +17,7 @@ export default function PettyCash() {
     const [transactions, setTransactions] = useState<PettyCashTransaction[]>([]);
     const [balance, setBalance] = useState(0);
     const [showAddModal, setShowAddModal] = useState(false);
-    const [loading, setLoading] = useState(true);
+    const [, setLoading] = useState(true);
     const [filter, setFilter] = useState('');
 
     const fetchData = async () => {

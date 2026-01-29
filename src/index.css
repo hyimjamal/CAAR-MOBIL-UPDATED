@@ -29,10 +29,23 @@
   --border-subtle: #1E293B;
 }
 
+html,
+body {
+  overflow-x: hidden;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  -webkit-tap-highlight-color: transparent;
+  scroll-behavior: smooth;
+}
+
 body {
   @apply bg-[var(--bg-canvas)] text-[var(--text-main)] antialiased overflow-x-hidden;
   font-family: 'Outfit', sans-serif;
   letter-spacing: -0.02em;
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-top: env(safe-area-inset-top);
+  -webkit-overflow-scrolling: touch;
 }
 
 @layer components {

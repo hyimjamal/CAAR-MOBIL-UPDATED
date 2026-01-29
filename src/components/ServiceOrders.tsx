@@ -5,6 +5,8 @@ import { api } from '../lib/api';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useTeam } from '../contexts/TeamContext';
 import { useNotifications } from '../contexts/NotificationContext';
+import { useTransactions } from '../contexts/TransactionContext';
+import { motion, AnimatePresence } from 'framer-motion';
 
 interface ServiceOrder {
     id: string;
@@ -32,10 +34,11 @@ export default function ServiceOrders() {
     const { t, locale } = useLanguage();
     const { currentUser } = useTeam();
     const { addNotification } = useNotifications();
+    const { services, pendingRequests, refreshData } = useTransactions();
     const isAdmin = currentUser?.role === 'admin';
-    const [services, setServices] = useState<ServiceOrder[]>([]);
     const [showForm, setShowForm] = useState(false);
     const [editingId, setEditingId] = useState<string | null>(null);
+    const [isSaving, setIsSaving] = useState(false);
     const [formData, setFormData] = useState({
         clientName: '',
         clientPhone: '',
@@ -59,32 +62,10 @@ export default function ServiceOrders() {
     }, [showForm]);
 
     useEffect(() => {
-        loadServices();
-
-        // Socket.io Real-time listener
-        const handleUpdate = (data: any) => {
-            if (data.type === 'services' || data.type === 'system') {
-                console.log(`[Real-time] Refreshing services due to: ${data.action}`);
-                loadServices();
-            }
-        };
-
-        const socketPromise = import('../lib/api').then(m => m.socket);
-        socketPromise.then(s => s.on('data-updated', handleUpdate));
-
-        return () => {
-            socketPromise.then(s => s.off('data-updated', handleUpdate));
-        };
-    }, []);
-
-    const loadServices = async () => {
-        try {
-            const data = await api.services.list();
-            setServices(data || []);
-        } catch (error) {
-            console.error('Error loading services:', error);
+        if (showForm) {
+            api.products.list().then(setAvailableProducts).catch(console.error);
         }
-    };
+    }, [showForm]);
 
     const handleUpdateStatus = async (id: string, status: string) => {
         if (!isAdmin) {
@@ -102,15 +83,23 @@ export default function ServiceOrders() {
             }
         }
         try {
-            const updated = await api.services.update(id, { status });
-            setServices(services.map((s: ServiceOrder) => s.id === id ? updated : s));
+            await api.services.update(id, { status });
+            await refreshData();
         } catch (error) {
             console.error('Error updating service status:', error);
         }
     };
 
-    const handleDeleteService = async (id: string) => {
-        if (!confirm(t('deleteTransactionConfirm') || 'Tem certeza que deseja excluir?')) return;
+    const [confirmToDelete, setConfirmToDelete] = useState<string | null>(null);
+
+    const handleDeleteService = (id: string) => {
+        setConfirmToDelete(id);
+    };
+
+    const executeDeleteService = async () => {
+        if (!confirmToDelete) return;
+        const id = confirmToDelete;
+        setConfirmToDelete(null);
 
         if (!isAdmin) {
             try {
@@ -129,13 +118,16 @@ export default function ServiceOrders() {
 
         try {
             await api.services.delete(id);
-            setServices(services.filter((s: ServiceOrder) => s.id !== id));
+            await refreshData();
         } catch (error) {
             console.error('Error deleting service:', error);
         }
     };
 
+
     const handleSaveService = async () => {
+        if (isSaving) return;
+        setIsSaving(true);
         try {
             const servicePrice = parseFloat(formData.price) || 0;
             const serviceParts = selectedParts.map(p => ({ productId: p.id, quantity: p.qty }));
@@ -159,26 +151,27 @@ export default function ServiceOrders() {
             }
 
             if (editingId) {
-                const updated = await api.services.update(editingId, {
+                await api.services.update(editingId, {
                     ...formData,
                     price: servicePrice
                 });
-                setServices(services.map(s => s.id === editingId ? updated : s));
             } else {
-                const newService = await api.services.create({
+                await api.services.create({
                     ...formData,
                     status: 'pending',
                     price: servicePrice,
                     parts: serviceParts
                 });
-                setServices([newService, ...services]);
             }
+            await refreshData();
             setShowForm(false);
             setEditingId(null);
             setFormData({ clientName: '', clientPhone: '', deviceModel: '', description: '', price: '', imageUrl: '', frontImageUrl: '', backImageUrl: '' });
             setSelectedParts([]);
         } catch (error) {
             console.error('Error saving service:', error);
+        } finally {
+            setIsSaving(false);
         }
     };
 
@@ -225,11 +218,16 @@ export default function ServiceOrders() {
                     <p className="text-slate-500 font-bold text-[9px] lg:text-base uppercase tracking-wider">{t('repairControl')}</p>
                 </div>
                 <button
-                    onClick={() => setShowForm(true)}
+                    onClick={() => {
+                        setShowForm(true);
+                        setEditingId(null);
+                        setFormData({ clientName: '', clientPhone: '', deviceModel: '', description: '', price: '', imageUrl: '', frontImageUrl: '', backImageUrl: '' });
+                        setSelectedParts([]);
+                    }}
                     className="flex items-center justify-center gap-2 px-6 py-3 lg:py-3.5 bg-[#FF4700] text-white text-[11px] lg:text-sm font-bold rounded-xl shadow-glow-orange hover:bg-[#E64000] transition-all active:scale-95 w-full md:w-auto"
                 >
                     <Plus className="w-5 h-5 lg:w-4 lg:h-4" />
-                    <span>{t('newService')}</span>
+                    <span>{isAdmin ? t('newService') : 'Solicitar Serviço'}</span>
                 </button>
             </div>
 
@@ -335,7 +333,7 @@ export default function ServiceOrders() {
                                         </span>
                                         {service.parts && service.parts.length > 0 && (
                                             <div className="flex flex-wrap gap-1 mt-1">
-                                                {service.parts.map((p, i) => (
+                                                {service.parts.map((p: any, i: number) => (
                                                     <span key={i} className="px-1.5 py-0.5 bg-slate-100 text-slate-500 text-[8px] font-bold rounded uppercase">
                                                         {p.quantity}x {p.product?.name || t('part')}
                                                     </span>
@@ -353,275 +351,334 @@ export default function ServiceOrders() {
                                 <p className="text-base lg:text-xl font-black text-[#FF4700]">MT {(service.price || 0).toLocaleString(locale, { minimumFractionDigits: 2 })}</p>
                             </div>
                             <div className="flex items-center gap-2">
-                                {service.status === 'pending' && (
-                                    <button
-                                        onClick={() => handleUpdateStatus(service.id, 'in_progress')}
-                                        className="flex items-center gap-2 px-3 py-2 rounded-xl bg-blue-50 text-blue-600 hover:bg-blue-100 transition-all font-black text-[10px] uppercase tracking-wider border border-blue-100"
-                                    >
-                                        <Clock className="w-3.5 h-3.5" />
-                                        {t('start')}
-                                    </button>
-                                )}
-                                {service.status === 'in_progress' && (
-                                    <button
-                                        onClick={() => handleUpdateStatus(service.id, 'finished')}
-                                        className="flex items-center gap-2 px-3 py-2 rounded-xl bg-orange-50 text-orange-600 hover:bg-orange-100 transition-all font-black text-[10px] uppercase tracking-wider border border-orange-100"
-                                    >
-                                        <CheckCircle2 className="w-3.5 h-3.5" />
-                                        {t('finish')}
-                                    </button>
-                                )}
-                                {service.status === 'finished' && (
-                                    <button
-                                        onClick={() => handleUpdateStatus(service.id, 'delivered')}
-                                        className="flex items-center gap-2 px-3 py-2 rounded-xl bg-green-50 text-green-600 hover:bg-green-100 transition-all font-black text-[10px] uppercase tracking-wider border border-green-100"
-                                    >
-                                        <Package className="w-3.5 h-3.5" />
-                                        {t('deliver')}
-                                    </button>
-                                )}
-                                {isAdmin && (
-                                    <button
-                                        onClick={() => handleEditService(service)}
-                                        className="p-2.5 rounded-xl bg-blue-50 text-blue-600 hover:bg-blue-100 transition-all border border-blue-100"
-                                        title={t('edit')}
-                                    >
-                                        <Pencil className="w-4 h-4" />
-                                    </button>
-                                )}
-                                {isAdmin && (
-                                    <button
-                                        onClick={() => handleDeleteService(service.id)}
-                                        className="p-2.5 rounded-xl bg-rose-50 text-rose-600 hover:bg-rose-100 transition-all border border-rose-100"
-                                        title={t('delete')}
-                                    >
-                                        <Trash className="w-4 h-4" />
-                                    </button>
-                                )}
+                                {(() => {
+                                    const isPending = Array.isArray(pendingRequests) && pendingRequests.some((r: any) => r.targetId === service.id);
+                                    return (
+                                        <>
+                                            {service.status === 'pending' && (
+                                                <button
+                                                    onClick={() => !isPending && handleUpdateStatus(service.id, 'in_progress')}
+                                                    disabled={isPending && !isAdmin}
+                                                    className={`flex items-center gap-2 px-3 py-2 rounded-xl font-black text-[10px] uppercase tracking-wider border ${isPending && !isAdmin ? 'bg-slate-50 text-slate-300 border-slate-100 cursor-not-allowed' : 'bg-blue-50 text-blue-600 hover:bg-blue-100 border-blue-100'}`}
+                                                >
+                                                    {isPending && !isAdmin ? <Clock className="w-3.5 h-3.5" /> : <Clock className="w-3.5 h-3.5" />}
+                                                    {isAdmin ? t('start') : (isPending ? 'Pendente' : 'Soli. Início')}
+                                                </button>
+                                            )}
+                                            {service.status === 'in_progress' && (
+                                                <button
+                                                    onClick={() => !isPending && handleUpdateStatus(service.id, 'finished')}
+                                                    disabled={isPending && !isAdmin}
+                                                    className={`flex items-center gap-2 px-3 py-2 rounded-xl font-black text-[10px] uppercase tracking-wider border ${isPending && !isAdmin ? 'bg-slate-50 text-slate-300 border-slate-100 cursor-not-allowed' : 'bg-orange-50 text-orange-600 hover:bg-orange-100 border-orange-100'}`}
+                                                >
+                                                    {isPending && !isAdmin ? <Clock className="w-3.5 h-3.5" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                                                    {isAdmin ? t('finish') : (isPending ? 'Pendente' : 'Soli. Término')}
+                                                </button>
+                                            )}
+                                            {service.status === 'finished' && (
+                                                <button
+                                                    onClick={() => !isPending && handleUpdateStatus(service.id, 'delivered')}
+                                                    disabled={isPending && !isAdmin}
+                                                    className={`flex items-center gap-2 px-3 py-2 rounded-xl font-black text-[10px] uppercase tracking-wider border ${isPending && !isAdmin ? 'bg-slate-50 text-slate-300 border-slate-100 cursor-not-allowed' : 'bg-green-50 text-green-600 hover:bg-green-100 border-green-100'}`}
+                                                >
+                                                    {isPending && !isAdmin ? <Clock className="w-3.5 h-3.5" /> : <Package className="w-3.5 h-3.5" />}
+                                                    {isAdmin ? t('deliver') : (isPending ? 'Pendente' : 'Soli. Entrega')}
+                                                </button>
+                                            )}
+                                            <button
+                                                onClick={() => !isPending && handleEditService(service)}
+                                                disabled={isPending && !isAdmin}
+                                                className={`p-2.5 rounded-xl border transition-all ${isPending && !isAdmin ? 'bg-slate-50 text-slate-200 border-slate-100 cursor-not-allowed' : 'bg-blue-50 text-blue-600 hover:bg-blue-100 border-blue-100'}`}
+                                                title={isAdmin ? t('edit') : (isPending ? 'Solicitação Pendente' : 'Solicitar Edição')}
+                                            >
+                                                <Pencil className="w-4 h-4" />
+                                            </button>
+                                            <button
+                                                onClick={() => !isPending && handleDeleteService(service.id)}
+                                                disabled={isPending && !isAdmin}
+                                                className={`p-2.5 rounded-xl border transition-all ${isPending && !isAdmin ? 'bg-slate-50 text-slate-200 border-slate-100 cursor-not-allowed' : 'bg-rose-50 text-rose-600 hover:bg-rose-100 border-rose-100'}`}
+                                                title={isAdmin ? t('delete') : (isPending ? 'Solicitação Pendente' : 'Solicitar Exclusão')}
+                                            >
+                                                <Trash className="w-4 h-4" />
+                                            </button>
+                                        </>
+                                    );
+                                })()}
                             </div>
                         </div>
                     </div>
                 ))}
             </div>
 
-            {showForm && (
-                <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 lg:p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
-                    <div className="bg-white w-full sm:max-w-lg rounded-t-[32px] sm:rounded-[32px] p-5 lg:p-8 shadow-2xl relative animate-in slide-in-from-bottom-10 sm:slide-in-from-bottom-2 duration-500 max-h-[95vh] sm:max-h-[90vh] overflow-y-auto custom-scrollbar pb-safe">
-                        <div className="flex items-center justify-between mb-5 sticky top-0 bg-white z-10 pb-2">
-                            <div>
-                                <h2 className="text-xl lg:text-2xl font-black text-slate-900 tracking-tight">{editingId ? t('editProduct') : t('newService')}</h2>
-                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none mt-1">{editingId ? 'Atualização de Ativo' : 'Registro de Ativo Digital'}</p>
-                            </div>
-                            <button onClick={() => { setShowForm(false); setEditingId(null); }} className="w-10 h-10 flex items-center justify-center bg-slate-100 text-slate-500 hover:text-slate-900 rounded-full active:scale-90 transition-all border border-slate-200">
-                                <X className="w-5 h-5" />
-                            </button>
-                        </div>
-                        <div className="space-y-1.5 lg:space-y-2">
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5 lg:gap-2">
-                                <div className="space-y-1">
-                                    <label className="text-[10px] lg:text-xs font-black text-slate-500 uppercase tracking-wider mb-1 block">{t('client')}</label>
-                                    <div className="relative group">
-                                        <User className="absolute left-3.5 lg:left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 group-focus-within:text-[#FF4700] transition-colors" />
-                                        <input
-                                            type="text"
-                                            placeholder={t('client')}
-                                            className="w-full pl-10 lg:pl-11 pr-4 py-3.5 lg:py-4 bg-slate-50 rounded-2xl border-none focus:ring-2 focus:ring-[#FF4700]/20 font-bold text-sm transition-all"
-                                            value={formData.clientName}
-                                            onChange={e => setFormData({ ...formData, clientName: e.target.value })}
-                                        />
-                                    </div>
+            <AnimatePresence>
+                {showForm && (
+                    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/40 backdrop-blur-sm">
+                        <motion.div
+                            initial={{ y: "100%" }}
+                            animate={{ y: 0 }}
+                            exit={{ y: "100%" }}
+                            transition={{ type: "spring", damping: 25, stiffness: 200 }}
+                            drag="y"
+                            dragDirectionLock
+                            dragConstraints={{ top: 0, bottom: 0 }}
+                            dragElastic={0.2}
+                            onDragEnd={(_, info) => {
+                                if (info.offset.y > 100) setShowForm(false);
+                            }}
+                            className="bg-white w-full sm:max-w-lg rounded-t-3xl sm:rounded-3xl p-3 sm:p-6 shadow-2xl relative max-h-[85vh] sm:max-h-[90vh] overflow-y-auto custom-scrollbar pb-safe touch-none sm:touch-auto"
+                        >
+                            {/* Drag Handle for Mobile */}
+                            <div className="w-12 h-1 bg-slate-200 rounded-full mx-auto mb-3 sm:hidden" />
+                            <div className="flex items-center justify-between mb-2 sm:mb-4 sticky top-0 bg-white z-10 pb-1">
+                                <div>
+                                    <h2 className="text-sm sm:text-lg font-black text-slate-900 tracking-tight">{editingId ? (isAdmin ? 'Editar' : 'Pedir Edição') : (isAdmin ? 'Novo' : 'Enviar Pedido')}</h2>
+                                    <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest leading-none mt-0.5">{editingId ? 'Atualizar' : 'Novo Registro'}</p>
                                 </div>
-                                <div className="space-y-1">
-                                    <label className="text-[10px] lg:text-xs font-black text-slate-500 uppercase tracking-wider mb-1 block">{t('phone')}</label>
-                                    <div className="relative group">
-                                        <Smartphone className="absolute left-3.5 lg:left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 group-focus-within:text-[#FF4700] transition-colors" />
-                                        <input
-                                            type="text"
-                                            placeholder={t('phoneNumberPlaceholder')}
-                                            className="w-full pl-10 lg:pl-11 pr-4 py-3.5 lg:py-4 bg-slate-50 rounded-2xl border-none focus:ring-2 focus:ring-[#FF4700]/20 font-bold text-sm transition-all"
-                                            value={formData.clientPhone}
-                                            onChange={e => setFormData({ ...formData, clientPhone: e.target.value })}
-                                        />
-                                    </div>
-                                </div>
+                                <button onClick={() => { setShowForm(false); setEditingId(null); }} className="w-8 h-8 flex items-center justify-center bg-slate-100 text-slate-500 hover:text-slate-900 rounded-full transition-all">
+                                    <X className="w-4 h-4" />
+                                </button>
                             </div>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 lg:gap-3">
-                                <div className="space-y-1">
-                                    <label className="text-[10px] lg:text-xs font-black text-slate-500 uppercase tracking-wider mb-1 block">{t('device')}</label>
-                                    <div className="relative group">
-                                        <Smartphone className="absolute left-3.5 lg:left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 group-focus-within:text-[#FF4700] transition-colors" />
-                                        <input
-                                            type="text"
-                                            placeholder={t('model')}
-                                            className="w-full pl-10 lg:pl-11 pr-4 py-3.5 lg:py-4 bg-slate-50 rounded-2xl border-none focus:ring-2 focus:ring-[#FF4700]/20 font-bold text-sm transition-all"
-                                            value={formData.deviceModel}
-                                            onChange={e => setFormData({ ...formData, deviceModel: e.target.value })}
-                                        />
-                                    </div>
-                                </div>
-                                <div className="space-y-1">
-                                    <label className="text-[10px] lg:text-xs font-black text-slate-500 uppercase tracking-wider mb-1 block">{t('value')} (MT)</label>
-                                    <div className="relative group">
-                                        <DollarSign className="absolute left-3.5 lg:left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 group-focus-within:text-emerald-500 transition-colors" />
-                                        <input
-                                            type="number"
-                                            placeholder="0.00"
-                                            className="w-full pl-10 lg:pl-11 pr-4 py-3.5 lg:py-4 bg-slate-50 rounded-2xl border-none focus:ring-2 focus:ring-emerald-500/20 font-black text-sm transition-all text-emerald-600"
-                                            value={formData.price}
-                                            onChange={e => setFormData({ ...formData, price: e.target.value })}
-                                        />
-                                    </div>
-                                </div>
-                            </div>
-                            <div className="space-y-1">
-                                <label className="text-[10px] lg:text-xs font-black text-slate-500 uppercase tracking-wider mb-1 block">{t('problemDescription')}</label>
-                                <textarea
-                                    placeholder={t('problemDescription')}
-                                    className="w-full px-4 py-4 bg-slate-50 rounded-2xl border-none focus:ring-2 focus:ring-[#FF4700]/20 font-bold h-24 lg:h-28 text-sm resize-none transition-all"
-                                    value={formData.description}
-                                    onChange={e => setFormData({ ...formData, description: e.target.value })}
-                                />
-                            </div>
-
-                            <div className="space-y-2 pt-2 border-t border-slate-100">
-                                <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-wider flex items-center gap-2">
-                                    <Package className="w-3.5 h-3.5 text-[#FF4700]" /> {t('appliedParts')}
-                                </h3>
-
-                                <div className="space-y-2">
-                                    {selectedParts.map((part) => (
-                                        <div key={part.id} className="flex items-center justify-between p-2 bg-slate-50 rounded-lg border border-slate-100">
-                                            <div className="min-w-0">
-                                                <p className="text-[11px] font-bold text-slate-900 truncate">{part.name}</p>
-                                                <p className="text-[9px] text-slate-500">MT {part.price.toFixed(2)} un</p>
-                                            </div>
-                                            <div className="flex items-center gap-3">
-                                                <div className="flex items-center gap-2 bg-white px-2 py-1 rounded-lg border border-slate-200">
-                                                    <button onClick={() => setSelectedParts(prev => prev.map(p => p.id === part.id ? { ...p, qty: Math.max(1, p.qty - 1) } : p))} className="text-slate-400 hover:text-slate-600 font-bold">-</button>
-                                                    <span className="text-xs font-black min-w-[20px] text-center">{part.qty}</span>
-                                                    <button onClick={() => setSelectedParts(prev => prev.map(p => p.id === part.id ? { ...p, qty: Math.min(part.stock, p.qty + 1) } : p))} className="text-slate-400 hover:text-slate-600 font-bold">+</button>
-                                                </div>
-                                                <button onClick={() => setSelectedParts(prev => prev.filter(p => p.id !== part.id))} className="text-rose-500 hover:text-rose-700">
-                                                    <Trash2 className="w-4 h-4" />
-                                                </button>
-                                            </div>
-                                        </div>
-                                    ))}
-
-                                    <div className="relative">
-                                        <div className="relative">
-                                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                            <div className="space-y-1 sm:space-y-2">
+                                <div className="grid grid-cols-2 gap-1.5 sm:gap-2">
+                                    <div className="space-y-0.5">
+                                        <label className="text-[8px] sm:text-xs font-black text-slate-500 uppercase tracking-wider block">{t('client')}</label>
+                                        <div className="relative group">
+                                            <User className="absolute left-3 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400" />
                                             <input
                                                 type="text"
-                                                placeholder={t('addPart')}
-                                                className="w-full pl-9 pr-3 py-1.5 bg-white border border-slate-200 rounded-lg text-[10px] font-bold focus:ring-2 focus:ring-[#FF4700]/20"
-                                                value={partSearch}
-                                                onChange={(e) => {
-                                                    setPartSearch(e.target.value);
-                                                    setShowPartSearch(true);
-                                                }}
-                                                onFocus={() => setShowPartSearch(true)}
+                                                className="w-full pl-8 pr-3 py-2 bg-slate-50 rounded-xl border-none font-bold text-xs transition-all"
+                                                value={formData.clientName}
+                                                onChange={e => setFormData({ ...formData, clientName: e.target.value })}
                                             />
                                         </div>
-
-                                        {showPartSearch && partSearch.length > 0 && (
-                                            <div className="absolute z-60 left-0 right-0 top-full mt-2 bg-white border border-slate-200 rounded-xl shadow-2xl max-h-48 overflow-y-auto custom-scrollbar">
-                                                {availableProducts
-                                                    .filter(p => p.name.toLowerCase().includes(partSearch.toLowerCase()) && p.stock > 0 && !selectedParts.some(sp => sp.id === p.id))
-                                                    .map(product => (
-                                                        <button
-                                                            key={product.id}
-                                                            onClick={() => {
-                                                                setSelectedParts([...selectedParts, { ...product, qty: 1 }]);
-                                                                setPartSearch('');
-                                                                setShowPartSearch(false);
-                                                            }}
-                                                            className="w-full p-3 text-left hover:bg-slate-50 flex items-center justify-between group transition-colors"
-                                                        >
-                                                            <div>
-                                                                <p className="text-xs font-bold text-slate-800 tracking-tight">{product.name}</p>
-                                                                <p className="text-[10px] text-slate-400 uppercase font-black">{t('stockLabel')} {product.stock} un</p>
-                                                            </div>
-                                                            <Plus className="w-4 h-4 text-slate-300 group-hover:text-[#FF4700]" />
-                                                        </button>
-                                                    ))}
-                                            </div>
-                                        )}
+                                    </div>
+                                    <div className="space-y-0.5">
+                                        <label className="text-[8px] sm:text-xs font-black text-slate-500 uppercase tracking-wider block">{t('phone')}</label>
+                                        <div className="relative group">
+                                            <Smartphone className="absolute left-3 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400" />
+                                            <input
+                                                type="text"
+                                                className="w-full pl-8 pr-3 py-2 bg-slate-50 rounded-xl border-none font-bold text-xs transition-all"
+                                                value={formData.clientPhone}
+                                                onChange={e => setFormData({ ...formData, clientPhone: e.target.value })}
+                                            />
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pb-2 pt-2 border-t border-slate-100">
-                                <div>
-                                    <label className="text-[10px] font-bold text-slate-500 uppercase mb-1.5 flex items-center gap-2">
-                                        <ImageIcon className="w-3 h-3" /> {t('frontPhoto')}
-                                    </label>
-                                    <ImageUpload
-                                        onUpload={(url) => setFormData({ ...formData, frontImageUrl: url })}
-                                        initialUrl={formData.frontImageUrl}
-                                        bucket="service-orders"
-                                        compact={true}
-                                        className="w-full"
+                                <div className="grid grid-cols-2 gap-2">
+                                    <div className="space-y-0.5">
+                                        <label className="text-[8px] sm:text-xs font-black text-slate-500 uppercase block">{t('device')}</label>
+                                        <div className="relative group">
+                                            <Smartphone className="absolute left-3 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400" />
+                                            <input
+                                                type="text"
+                                                className="w-full pl-8 pr-3 py-2 bg-slate-50 rounded-xl border-none font-bold text-xs"
+                                                value={formData.deviceModel}
+                                                onChange={e => setFormData({ ...formData, deviceModel: e.target.value })}
+                                            />
+                                        </div>
+                                    </div>
+                                    <div className="space-y-0.5">
+                                        <label className="text-[8px] sm:text-xs font-black text-slate-500 uppercase block">{t('value')}</label>
+                                        <div className="relative group">
+                                            <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400" />
+                                            <input
+                                                type="number"
+                                                className="w-full pl-8 pr-3 py-2 bg-slate-50 rounded-xl border-none font-black text-xs text-emerald-600"
+                                                value={formData.price}
+                                                onChange={e => setFormData({ ...formData, price: e.target.value })}
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="space-y-0.5">
+                                    <label className="text-[8px] sm:text-xs font-black text-slate-500 uppercase block">{t('problemDescription')}</label>
+                                    <textarea
+                                        className="w-full px-3 py-2 bg-slate-50 rounded-xl border-none font-bold h-16 sm:h-28 text-xs resize-none"
+                                        value={formData.description}
+                                        onChange={e => setFormData({ ...formData, description: e.target.value })}
                                     />
                                 </div>
-                                <div>
-                                    <label className="text-[10px] font-bold text-slate-500 uppercase mb-1.5 flex items-center gap-2">
-                                        <ImageIcon className="w-3 h-3" /> {t('backPhoto')}
-                                    </label>
-                                    <ImageUpload
-                                        onUpload={(url) => setFormData({ ...formData, backImageUrl: url })}
-                                        initialUrl={formData.backImageUrl}
-                                        bucket="service-orders"
-                                        compact={true}
-                                        className="w-full"
-                                    />
+
+                                <div className="space-y-2 pt-2 border-t border-slate-100">
+                                    <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-wider flex items-center gap-2">
+                                        <Package className="w-3.5 h-3.5 text-[#FF4700]" /> {t('appliedParts')}
+                                    </h3>
+
+                                    <div className="space-y-2">
+                                        {selectedParts.map((part) => (
+                                            <div key={part.id} className="flex items-center justify-between p-2 bg-slate-50 rounded-lg border border-slate-100">
+                                                <div className="min-w-0">
+                                                    <p className="text-[11px] font-bold text-slate-900 truncate">{part.name}</p>
+                                                    <p className="text-[9px] text-slate-500">MT {part.price.toFixed(2)} un</p>
+                                                </div>
+                                                <div className="flex items-center gap-3">
+                                                    <div className="flex items-center gap-2 bg-white px-2 py-1 rounded-lg border border-slate-200">
+                                                        <button onClick={() => setSelectedParts(prev => prev.map(p => p.id === part.id ? { ...p, qty: Math.max(1, p.qty - 1) } : p))} className="text-slate-400 hover:text-slate-600 font-bold">-</button>
+                                                        <span className="text-xs font-black min-w-[20px] text-center">{part.qty}</span>
+                                                        <button onClick={() => setSelectedParts(prev => prev.map(p => p.id === part.id ? { ...p, qty: Math.min(part.stock, p.qty + 1) } : p))} className="text-slate-400 hover:text-slate-600 font-bold">+</button>
+                                                    </div>
+                                                    <button onClick={() => setSelectedParts(prev => prev.filter(p => p.id !== part.id))} className="text-rose-500 hover:text-rose-700">
+                                                        <Trash2 className="w-4 h-4" />
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ))}
+
+                                        <div className="relative">
+                                            <div className="relative">
+                                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                                                <input
+                                                    type="text"
+                                                    placeholder={t('addPart')}
+                                                    className="w-full pl-9 pr-3 py-1.5 bg-white border border-slate-200 rounded-lg text-[10px] font-bold focus:ring-2 focus:ring-[#FF4700]/20"
+                                                    value={partSearch}
+                                                    onChange={(e) => {
+                                                        setPartSearch(e.target.value);
+                                                        setShowPartSearch(true);
+                                                    }}
+                                                    onFocus={() => setShowPartSearch(true)}
+                                                />
+                                            </div>
+
+                                            {showPartSearch && partSearch.length > 0 && (
+                                                <div className="absolute z-60 left-0 right-0 top-full mt-2 bg-white border border-slate-200 rounded-xl shadow-2xl max-h-48 overflow-y-auto custom-scrollbar">
+                                                    {availableProducts
+                                                        .filter(p => p.name.toLowerCase().includes(partSearch.toLowerCase()) && p.stock > 0 && !selectedParts.some(sp => sp.id === p.id))
+                                                        .map(product => (
+                                                            <button
+                                                                key={product.id}
+                                                                onClick={() => {
+                                                                    setSelectedParts([...selectedParts, { ...product, qty: 1 }]);
+                                                                    setPartSearch('');
+                                                                    setShowPartSearch(false);
+                                                                }}
+                                                                className="w-full p-3 text-left hover:bg-slate-50 flex items-center justify-between group transition-colors"
+                                                            >
+                                                                <div>
+                                                                    <p className="text-xs font-bold text-slate-800 tracking-tight">{product.name}</p>
+                                                                    <p className="text-[10px] text-slate-400 uppercase font-black">{t('stockLabel')} {product.stock} un</p>
+                                                                </div>
+                                                                <Plus className="w-4 h-4 text-slate-300 group-hover:text-[#FF4700]" />
+                                                            </button>
+                                                        ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
                                 </div>
+                                <div className="grid grid-cols-2 gap-2 pb-1.5 pt-1.5 border-t border-slate-100">
+                                    <div>
+                                        <label className="text-[9px] font-bold text-slate-500 uppercase mb-1 flex items-center gap-1">
+                                            <ImageIcon className="w-3 h-3" /> Foto Frontal
+                                        </label>
+                                        <ImageUpload
+                                            onUpload={(url) => setFormData({ ...formData, frontImageUrl: url })}
+                                            initialUrl={formData.frontImageUrl}
+                                            bucket="service-orders"
+                                            compact={true}
+                                            className="w-full"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-[9px] font-bold text-slate-500 uppercase mb-1 flex items-center gap-1">
+                                            <ImageIcon className="w-3 h-3" /> Foto Traseira
+                                        </label>
+                                        <ImageUpload
+                                            onUpload={(url) => setFormData({ ...formData, backImageUrl: url })}
+                                            initialUrl={formData.backImageUrl}
+                                            bucket="service-orders"
+                                            compact={true}
+                                            className="w-full"
+                                        />
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={handleSaveService}
+                                    disabled={isSaving}
+                                    className="w-full py-3 sm:py-5 bg-gradient-to-r from-[#FF4700] to-[#FF6A00] text-white font-black uppercase text-xs lg:text-sm tracking-[0.2em] rounded-24 lg:rounded-2xl shadow-glow-orange hover:brightness-110 active:scale-[0.98] transition-all mt-2 mb-1 flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    {isSaving && <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+                                    {editingId ? (isAdmin ? t('save') : 'Solicitar Alteração') : (isAdmin ? t('newService') : 'Enviar Solicitação')}
+                                </button>
                             </div>
-                            <div className="hidden">
-                                <label className="text-xs font-bold text-slate-500 uppercase mb-2 flex items-center gap-2">
-                                    <ImageIcon className="w-3.5 h-3.5" /> {t('devicePhoto')}
-                                </label>
-                                <ImageUpload
-                                    onUpload={(url) => setFormData({ ...formData, imageUrl: url })}
-                                    initialUrl={formData.imageUrl}
-                                    bucket="service-orders"
-                                    compact={true}
-                                />
-                            </div>
-                            <button
-                                onClick={handleSaveService}
-                                className="w-full py-4 lg:py-5 bg-gradient-to-r from-[#FF4700] to-[#FF6A00] text-white font-black uppercase text-xs lg:text-sm tracking-[0.2em] rounded-24 lg:rounded-2xl shadow-glow-orange hover:brightness-110 active:scale-[0.98] transition-all mt-4 mb-2"
-                            >
-                                {editingId ? t('save') : t('newService')}
-                            </button>
-                        </div>
+                        </motion.div>
                     </div>
-                </div>
-            )}
+                )}
+            </AnimatePresence>
+
+            <AnimatePresence>
+                {confirmToDelete && (
+                    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md">
+                        <motion.div
+                            initial={{ scale: 0.9, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            exit={{ scale: 0.9, opacity: 0 }}
+                            className="bg-white w-full max-w-[280px] sm:max-w-sm rounded-[32px] p-4 sm:p-8 shadow-2xl border border-slate-200"
+                        >
+                            <div className="flex flex-col items-center text-center">
+                                <div className="w-12 h-12 bg-red-100 rounded-2xl flex items-center justify-center mb-3 text-red-600">
+                                    <Trash2 className="w-6 h-6" />
+                                </div>
+                                <h3 className="text-base sm:text-xl font-black text-slate-900 mb-1">Eliminar Serviço</h3>
+                                <p className="text-slate-500 text-[11px] sm:text-sm font-bold mb-6">
+                                    Tem certeza que deseja {isAdmin ? 'remover este serviço?' : 'solicitar a remoção deste serviço?'}
+                                </p>
+
+                                <div className="flex flex-col w-full gap-2">
+                                    <button
+                                        onClick={executeDeleteService}
+                                        className="w-full py-2.5 bg-red-600 text-white font-black uppercase text-[10px] tracking-wider rounded-xl shadow-lg active:scale-95 transition-all"
+                                    >
+                                        {isAdmin ? t('delete') : 'Solicitar'}
+                                    </button>
+                                    <button
+                                        onClick={() => setConfirmToDelete(null)}
+                                        className="w-full py-2.5 bg-slate-50 text-slate-400 font-bold uppercase text-[10px] tracking-wider rounded-xl hover:bg-slate-100 transition-all border border-slate-200"
+                                    >
+                                        {t('cancel')}
+                                    </button>
+                                </div>
+                            </div>
+                        </motion.div>
+                    </div>
+                )}
+            </AnimatePresence>
+
             {/* Full Image Viewer - Optimized for Mobile & iOS */}
-            {viewImage && (
-                <div
-                    className="fixed inset-0 z-[200] flex items-center justify-center bg-black/95 backdrop-blur-xl p-4 md:p-8 animate-in fade-in duration-300"
-                    onClick={() => setViewImage(null)}
-                    style={{ overscrollBehavior: 'contain' }}
-                >
-                    <button
-                        className="absolute top-safe-4 right-6 lg:top-8 lg:right-8 w-12 h-12 flex items-center justify-center bg-white/10 hover:bg-white/20 text-white rounded-full transition-colors z-[210] active:scale-90"
+            <AnimatePresence>
+                {viewImage && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-[200] flex items-center justify-center bg-black/95 backdrop-blur-xl p-4 md:p-8"
                         onClick={() => setViewImage(null)}
+                        style={{ overscrollBehavior: 'contain' }}
                     >
-                        <X className="w-6 h-6 md:w-8 md:h-8" />
-                    </button>
+                        <button
+                            className="absolute top-safe-4 right-6 lg:top-8 lg:right-8 w-12 h-12 flex items-center justify-center bg-white/10 hover:bg-white/20 text-white rounded-full transition-colors z-[210] active:scale-90"
+                            onClick={() => setViewImage(null)}
+                        >
+                            <X className="w-6 h-6 md:w-8 md:h-8" />
+                        </button>
 
-                    <div className="relative w-full h-full flex items-center justify-center" onClick={e => e.stopPropagation()}>
-                        <img
-                            src={viewImage}
-                            className="max-w-full max-h-full object-contain rounded-2xl shadow-[0_0_100px_rgba(0,0,0,0.8)] animate-in zoom-in-95 duration-500"
-                        />
-                    </div>
-
-                    {/* iOS Home Indicator Padding */}
-                    <div className="absolute bottom-0 h-10 w-full pointer-events-none" />
-                </div>
-            )}
+                        <motion.div
+                            initial={{ scale: 0.9, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            exit={{ scale: 0.9, opacity: 0 }}
+                            className="relative w-full h-full flex items-center justify-center"
+                            onClick={e => e.stopPropagation()}
+                        >
+                            <img
+                                src={viewImage}
+                                className="max-w-full max-h-full object-contain rounded-2xl shadow-[0_0_100px_rgba(0,0,0,0.8)]"
+                                alt="Visualização"
+                            />
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
         </div>
     );
 }

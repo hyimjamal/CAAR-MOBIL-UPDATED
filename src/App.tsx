@@ -17,6 +17,7 @@ import { ThemeProvider } from './contexts/ThemeContext';
 import { PWAProvider } from './contexts/PWAContext';
 import { useOnlinePresence } from './hooks/useOnlinePresence';
 import { motion, AnimatePresence } from 'framer-motion';
+import PWAInstallPopup from './components/ui/PWAInstallPopup';
 
 const pageVariants = {
   initial: { opacity: 0, x: 20 },
@@ -49,23 +50,23 @@ function AppContent() {
 
     switch (activePage) {
       case 'dashboard':
-        return <Dashboard searchQuery={searchQuery} />;
+        return <Dashboard searchQuery={searchQuery} onNavigate={setActivePage} />;
       case 'inventory':
         return <Products searchQuery={searchQuery} />;
       case 'finances_hub':
-        return (role === 'admin' || role === 'manager') ? <FinancesHub /> : <Dashboard searchQuery={searchQuery} />;
+        return (role === 'admin' || role === 'manager') ? <FinancesHub /> : <Dashboard searchQuery={searchQuery} onNavigate={setActivePage} />;
       case 'audit_hub':
-        return (role === 'admin' || role === 'manager') ? <AuditHub /> : <Dashboard searchQuery={searchQuery} />;
+        return (role === 'admin' || role === 'manager') ? <AuditHub /> : <Dashboard searchQuery={searchQuery} onNavigate={setActivePage} />;
       case 'services':
         return <ServiceOrders />;
       case 'team':
-        return role === 'admin' ? <Team /> : <Dashboard searchQuery={searchQuery} />;
+        return role === 'admin' ? <Team /> : <Dashboard searchQuery={searchQuery} onNavigate={setActivePage} />;
       case 'settings':
-        return role === 'admin' ? <AdminSettings /> : <Dashboard searchQuery={searchQuery} />;
+        return role === 'admin' ? <AdminSettings /> : <Dashboard searchQuery={searchQuery} onNavigate={setActivePage} />;
       case 'about':
         return <About />;
       default:
-        return <Dashboard searchQuery={searchQuery} />;
+        return <Dashboard searchQuery={searchQuery} onNavigate={setActivePage} />;
     }
   };
 
@@ -108,6 +109,7 @@ function AppContent() {
           {renderPage()}
         </motion.div>
       </AnimatePresence>
+      <PWAInstallPopup />
     </MainLayout>
   );
 }

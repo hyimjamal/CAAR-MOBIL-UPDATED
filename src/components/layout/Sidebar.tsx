@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { LayoutDashboard, Box, ClipboardList, Settings, Activity, Sparkles, LogOut, ChevronLeft, History, DollarSign, Info } from 'lucide-react';
+import { LayoutDashboard, Box, ClipboardList, Settings, Activity, Sparkles, LogOut, ChevronLeft, History, DollarSign, Info, Download } from 'lucide-react';
 import logo from '../../assets/logo.png';
 import { useTeam } from '../../contexts/TeamContext';
 import { useLanguage } from '../../contexts/LanguageContext';
+import { usePWA } from '../../contexts/PWAContext';
 
 interface NavItem {
   icon: React.ElementType;
@@ -24,6 +25,7 @@ export default function Sidebar({ activeId, onNavigate }: SidebarProps) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const { currentUser, logout } = useTeam();
   const { t } = useLanguage();
+  const { installable, installApp } = usePWA();
 
   const navSections: NavSection[] = [
     {
@@ -142,7 +144,20 @@ export default function Sidebar({ activeId, onNavigate }: SidebarProps) {
         </nav>
 
 
-        <div className="p-6 border-t border-[var(--border-subtle)]">
+        <div className="p-6 border-t border-[var(--border-subtle)] space-y-4">
+          {installable && (
+            <button
+              onClick={installApp}
+              className="w-full flex items-center gap-3 px-4 py-3 bg-[var(--bg-canvas)] border border-[#FF4700]/30 rounded-2xl text-[#FF4700] hover:bg-[#FF4700] hover:text-white transition-all shadow-sm group"
+            >
+              <Download className="w-5 h-5 group-hover:scale-110 transition-transform" />
+              <div className="text-left">
+                <p className="text-[12px] font-black uppercase tracking-tight">Instalar App</p>
+                <p className="text-[9px] font-bold opacity-70">Acesso rápido</p>
+              </div>
+            </button>
+          )}
+
           <div className="flex items-center gap-4 p-4 rounded-3xl hover:bg-[var(--bg-canvas)] transition-all cursor-pointer group">
             <div className="w-10 h-10 rounded-2xl bg-[var(--bg-sidebar)] flex items-center justify-center p-0.5 border border-[var(--border-subtle)] group-hover:border-[#FF4700]/30 transition-colors">
               <div className="w-full h-full rounded-[14px] bg-gradient-to-br from-[#FF4700] to-[#E64000] flex items-center justify-center">

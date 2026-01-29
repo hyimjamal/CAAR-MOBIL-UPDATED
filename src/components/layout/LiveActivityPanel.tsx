@@ -36,7 +36,7 @@ export const LiveActivityPanel: React.FC<LiveActivityPanelProps> = ({ isOpen, on
         }
     };
 
-    const getActionColor = (category: string, action: string) => {
+    const getActionColor = (action: string) => {
         if (action.includes('DELETE')) return 'border-red-500/30 bg-red-500/5';
         if (action.includes('CREATE')) return 'border-emerald-500/30 bg-emerald-500/5';
         if (action.includes('UPDATE')) return 'border-blue-500/30 bg-blue-500/5';
@@ -68,7 +68,7 @@ export const LiveActivityPanel: React.FC<LiveActivityPanelProps> = ({ isOpen, on
                     logs.map((log) => (
                         <div
                             key={log.id}
-                            className={`p-3 rounded-xl border transition-all hover:scale-[1.01] ${getActionColor(log.category, log.action)}`}
+                            className={`p-3 rounded-xl border transition-all hover:scale-[1.01] ${getActionColor(log.action)}`}
                         >
                             <div className="flex items-start gap-3">
                                 <div className="mt-1">

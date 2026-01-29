@@ -36,8 +36,10 @@ interface TransactionContextType {
     loading: boolean;
     refreshData: () => Promise<void>;
     addTransaction: (transaction: Omit<Transaction, 'id' | 'date'>) => Promise<void>;
+    updateTransaction: (id: string, data: Partial<Transaction>) => Promise<void>;
     updatePermissionRequestStatus: (id: string, status: 'approved' | 'rejected') => Promise<void>;
     recentTransactions: Transaction[];
+    services: any[];
 }
 
 const TransactionContext = createContext<TransactionContextType | undefined>(undefined);
@@ -46,6 +48,7 @@ export function TransactionProvider({ children }: { children: ReactNode }) {
     const [transactions, setTransactions] = useState<Transaction[]>([]);
     const [stats, setStats] = useState<any>(null);
     const [products, setProducts] = useState<any[]>([]);
+    const [services, setServices] = useState<any[]>([]);
     const [analyticsSummary, setAnalyticsSummary] = useState<any>(null);
     const [pendingRequests, setPendingRequests] = useState<PermissionRequest[]>([]);
     const [loading, setLoading] = useState(true);
@@ -63,28 +66,36 @@ export function TransactionProvider({ children }: { children: ReactNode }) {
 
         // Real-time listener for permission results
         const handlePermissionResult = (request: PermissionRequest) => {
-            // If I am the person who requested this, notify me
-            if (currentUser && request.userId === currentUser.id) {
-                const isApproved = request.status === 'approved';
+            if (!currentUser) return;
 
-                const labels: Record<string, string> = {
-                    'CREATE_PRODUCT': 'criação de produto',
-                    'UPDATE_PRODUCT': 'edição de produto',
-                    'DELETE_PRODUCT': 'exclusão de produto',
-                    'CREATE_SERVICE': 'criação de serviço',
-                    'UPDATE_SERVICE': 'edição de serviço',
-                    'DELETE_SERVICE': 'exclusão de serviço',
-                    'UPDATE_SERVICE_STATUS': 'alteração de status'
-                };
+            const isApproved = request.status === 'approved';
+            const labels: Record<string, string> = {
+                'CREATE_PRODUCT': 'criação de produto',
+                'UPDATE_PRODUCT': 'edição de produto',
+                'DELETE_PRODUCT': 'exclusão de produto',
+                'CREATE_SERVICE': 'criação de serviço',
+                'UPDATE_SERVICE': 'edição de serviço',
+                'DELETE_SERVICE': 'exclusão de serviço',
+                'UPDATE_SERVICE_STATUS': 'alteração de status'
+            };
 
-                const actionLabel = labels[request.type] || 'solicitação';
+            const actionLabel = labels[request.type] || 'solicitação';
+            const requesterName = request.user?.name || 'colega';
 
+            // Special message for the person who requested it
+            if (request.userId === currentUser.id) {
                 if (isApproved) {
                     addNotification(`Sua ${actionLabel} foi APROVADA pelo administrador com sucesso!`, 'success');
                 } else {
                     addNotification(`Sua ${actionLabel} foi REJEITADA pelo administrador.`, 'error');
                 }
             }
+            // Notification for others in the team (Managers and Staff)
+            else if (currentUser.role !== 'admin') {
+                const statusLabel = isApproved ? 'APROVOU' : 'REJEITOU';
+                addNotification(`Admin ${statusLabel} a ${actionLabel} de ${requesterName}.`, isApproved ? 'success' : 'info');
+            }
+
             refreshData();
         };
 
@@ -103,10 +114,11 @@ export function TransactionProvider({ children }: { children: ReactNode }) {
 
     const refreshData = async () => {
         try {
-            const [transData, statsData, productsData, summaryData, requestsData] = await Promise.all([
+            const [transData, statsData, productsData, servicesData, summaryData, requestsData] = await Promise.all([
                 api.transactions.list(),
                 api.stats.get(),
                 api.analytics.getProducts(),
+                api.services.list(),
                 api.analytics.getSummary(),
                 api.permissionRequests.list()
             ]);
@@ -114,6 +126,7 @@ export function TransactionProvider({ children }: { children: ReactNode }) {
             setTransactions(Array.isArray(transData) ? transData : []);
             setStats(statsData);
             setProducts(Array.isArray(productsData) ? productsData : []);
+            setServices(Array.isArray(servicesData) ? servicesData : []);
             setAnalyticsSummary(summaryData);
             setPendingRequests(Array.isArray(requestsData) ? requestsData.filter((r: any) => r.status === 'pending') : []);
         } catch (error) {
@@ -131,6 +144,18 @@ export function TransactionProvider({ children }: { children: ReactNode }) {
             refreshData();
         } catch (error) {
             console.error('Error adding transaction:', error);
+        }
+    };
+
+    const updateTransaction = async (id: string, data: Partial<Transaction>) => {
+        try {
+            const updated = await api.transactions.update(id, data);
+            setTransactions((prev) => prev.map(t => t.id === id ? updated : t));
+            refreshData();
+            addNotification('Transação atualizada com sucesso', 'success');
+        } catch (error) {
+            console.error('Error updating transaction:', error);
+            addNotification('Erro ao atualizar transação', 'error');
         }
     };
 
@@ -164,8 +189,10 @@ export function TransactionProvider({ children }: { children: ReactNode }) {
             loading,
             refreshData,
             addTransaction,
+            updateTransaction,
             updatePermissionRequestStatus,
-            recentTransactions
+            recentTransactions,
+            services
         }}>
             {children}
         </TransactionContext.Provider>

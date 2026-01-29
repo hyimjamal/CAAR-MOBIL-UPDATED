@@ -79,6 +79,15 @@ export const api = {
             });
             return res.json();
         },
+        update: async (id: string, data: any) => {
+            const res = await fetch(`${API_URL}/transactions/${id}`, {
+                method: 'PATCH',
+                headers: getAuthHeaders(),
+                body: JSON.stringify(data)
+            });
+            if (!res.ok) throw new Error('Erro ao atualizar transação');
+            return res.json();
+        },
         delete: async (id: string) => {
             const res = await fetch(`${API_URL}/transactions/${id}`, {
                 method: 'DELETE',

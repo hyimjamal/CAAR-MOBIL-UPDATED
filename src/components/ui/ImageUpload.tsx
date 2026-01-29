@@ -10,7 +10,7 @@ interface ImageUploadProps {
     compact?: boolean;
 }
 
-export default function ImageUpload({ onUpload, initialUrl, bucket = 'products', className = '', compact = false }: ImageUploadProps) {
+export default function ImageUpload({ onUpload, initialUrl, className = '', compact = false }: ImageUploadProps) {
     const [imageUrl, setImageUrl] = useState<string | null>(initialUrl || null);
     const [uploading, setUploading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -65,23 +65,23 @@ export default function ImageUpload({ onUpload, initialUrl, bucket = 'products',
     }
 
     return (
-        <div className={`space-y-2 ${className}`}>
-            <div className={`flex gap-3 ${compact ? 'flex-row' : 'flex-col sm:flex-row'}`}>
+        <div className={`space-y-1.5 ${className}`}>
+            <div className={`flex gap-2 sm:gap-3 ${compact ? 'flex-row' : 'flex-row sm:flex-row'}`}>
                 {/* Standard Upload */}
                 <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
                     disabled={uploading}
-                    className={`flex-1 border-2 border-dashed border-slate-300 rounded-xl hover:bg-slate-50 transition-all group flex flex-col items-center justify-center gap-2 ${compact ? 'p-3 h-24' : 'p-6'}`}
+                    className={`flex-1 border-2 border-dashed border-slate-300 rounded-xl hover:bg-slate-50 transition-all group flex flex-col items-center justify-center gap-1.5 ${compact || true ? 'p-2 sm:p-3 h-20 sm:h-24' : 'p-6'}`}
                 >
                     {uploading ? (
-                        <Loader2 className="w-6 h-6 text-[#FF4700] animate-spin" />
+                        <Loader2 className="w-5 h-5 text-[#FF4700] animate-spin" />
                     ) : (
                         <>
-                            <div className="p-2 rounded-full bg-slate-100 group-hover:bg-[#FF4700]/10 transition-colors">
-                                <Upload className="w-5 h-5 text-slate-400 group-hover:text-[#FF4700]" />
+                            <div className="p-1 sm:p-2 rounded-full bg-slate-100 group-hover:bg-[#FF4700]/10 transition-colors">
+                                <Upload className="w-4 h-4 sm:w-5 sm:h-5 text-slate-400 group-hover:text-[#FF4700]" />
                             </div>
-                            <span className="text-xs font-bold text-slate-500 group-hover:text-slate-700">Galeria</span>
+                            <span className="text-[10px] sm:text-xs font-bold text-slate-500 group-hover:text-slate-700">Galeria</span>
                         </>
                     )}
                 </button>
@@ -91,16 +91,16 @@ export default function ImageUpload({ onUpload, initialUrl, bucket = 'products',
                     type="button"
                     onClick={() => cameraInputRef.current?.click()}
                     disabled={uploading}
-                    className={`flex-1 border-2 border-dashed border-slate-300 rounded-xl hover:bg-slate-50 transition-all group flex flex-col items-center justify-center gap-2 ${compact ? 'p-3 h-24' : 'p-6'}`}
+                    className={`flex-1 border-2 border-dashed border-slate-300 rounded-xl hover:bg-slate-50 transition-all group flex flex-col items-center justify-center gap-1.5 ${compact || true ? 'p-2 sm:p-3 h-20 sm:h-24' : 'p-6'}`}
                 >
                     {uploading ? (
-                        <Loader2 className="w-6 h-6 text-[#FF4700] animate-spin" />
+                        <Loader2 className="w-5 h-5 text-[#FF4700] animate-spin" />
                     ) : (
                         <>
-                            <div className="p-2 rounded-full bg-slate-100 group-hover:bg-[#FF4700]/10 transition-colors">
-                                <Camera className="w-5 h-5 text-slate-400 group-hover:text-[#FF4700]" />
+                            <div className="p-1 sm:p-2 rounded-full bg-slate-100 group-hover:bg-[#FF4700]/10 transition-colors">
+                                <Camera className="w-4 h-4 sm:w-5 sm:h-5 text-slate-400 group-hover:text-[#FF4700]" />
                             </div>
-                            <span className="text-xs font-bold text-slate-500 group-hover:text-slate-700">Câmera</span>
+                            <span className="text-[10px] sm:text-xs font-bold text-slate-500 group-hover:text-slate-700">Câmera</span>
                         </>
                     )}
                 </button>

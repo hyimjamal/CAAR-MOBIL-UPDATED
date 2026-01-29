@@ -40,9 +40,10 @@ interface ProductAnalytics extends Product {
 
 interface DashboardProps {
   searchQuery?: string;
+  onNavigate?: (page: string) => void;
 }
 
-export default function Dashboard({ searchQuery = '' }: DashboardProps) {
+export default function Dashboard({ searchQuery = '', onNavigate }: DashboardProps) {
   const {
     stats,
     products,
@@ -260,7 +261,7 @@ export default function Dashboard({ searchQuery = '' }: DashboardProps) {
             </div>
           </div>
           <button
-            onClick={() => window.location.hash = '#products'} // Assuming Hash Router or similar, or just navigate
+            onClick={() => onNavigate && onNavigate('inventory')}
             className="px-4 lg:px-6 py-2 lg:py-3 bg-orange-600 text-white text-[10px] lg:text-xs font-black rounded-lg lg:rounded-xl shadow-lg hover:bg-orange-700 transition-all uppercase whitespace-nowrap"
           >
             {t('restockNow')}

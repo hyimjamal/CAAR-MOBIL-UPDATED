@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, ReactNode } from 'react';
+import { createContext, useContext, useState, ReactNode } from 'react';
 
 export interface Notification {
     id: string;
@@ -33,7 +33,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
         setNotifications([]);
     };
 
-    const markAsRead = (id: string) => {
+    const markAsRead = (_id: string) => {
         // Ideally update read status, for now just keeping track
     };
 

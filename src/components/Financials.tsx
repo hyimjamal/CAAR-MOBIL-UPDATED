@@ -15,22 +15,26 @@ import {
     Search,
     User,
     Package,
-    Banknote
+    Banknote,
+    Pencil
 } from 'lucide-react';
 import { useTransactions } from '../contexts/TransactionContext';
 import { format, isBefore, startOfDay, parseISO } from 'date-fns';
 import { useLanguage } from '../contexts/LanguageContext';
+import { useTeam } from '../contexts/TeamContext';
 
 export default function Financials() {
-    const { transactions, refreshData, stats } = useTransactions();
+    const { transactions, refreshData, stats, addTransaction, updateTransaction } = useTransactions();
     const { t, locale, smartTranslate } = useLanguage();
+    const { currentUser } = useTeam();
+    const isAdmin = currentUser?.role === 'admin';
     const [searchTerm, setSearchTerm] = useState('');
     const [filterType, setFilterType] = useState<'all' | 'income' | 'expense'>('all');
     const [filterStatus, setFilterStatus] = useState<'all' | 'paid' | 'pending' | 'overdue'>('all');
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [showAddModal, setShowAddModal] = useState(false);
-    const { addTransaction } = useTransactions();
-
+    const [showEditModal, setShowEditModal] = useState(false);
+    const [editingTransaction, setEditingTransaction] = useState<any>(null);
 
 
     const filteredTransactions = useMemo(() => {
@@ -307,7 +311,7 @@ export default function Financials() {
                         </thead>
                         <tbody className="divide-y divide-slate-50">
                             {filteredTransactions.map((t_item) => (
-                                <tr key={t_item.id} className="group hover:bg-slate-50/80 transition-all cursor-default">
+                                <tr key={t_item.id} className="group hover:bg-slate-50/80 transition-all cursor-default relative">
                                     <td className="px-4 lg:px-8 py-4 lg:py-6 whitespace-nowrap">
                                         <div className="space-y-1">
                                             <div className="text-[12px] lg:text-sm font-black text-slate-900">
@@ -356,6 +360,20 @@ export default function Financials() {
                                             {t_item.type === 'income' ? '+' : '-'} {t_item.amount.toLocaleString(locale, { minimumFractionDigits: 2 })}
                                         </p>
                                     </td>
+                                    <td className="px-4 lg:px-8 py-4 lg:py-6 text-right">
+                                        {isAdmin && (
+                                            <button
+                                                onClick={() => {
+                                                    setEditingTransaction(t_item);
+                                                    setShowEditModal(true);
+                                                }}
+                                                className="p-2 ml-auto text-slate-300 hover:text-[#FF4700] hover:bg-[#FF4700]/10 rounded-xl transition-all opacity-0 group-hover:opacity-100"
+                                                title={t('edit')}
+                                            >
+                                                <Pencil className="w-4 h-4" />
+                                            </button>
+                                        )}
+                                    </td>
                                 </tr>
                             ))}
                         </tbody>
@@ -373,6 +391,78 @@ export default function Financials() {
                 </div>
             </div>
 
+            {/* Edit Transaction Modal */}
+            {showEditModal && editingTransaction && (
+                <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
+                    <div className="bg-white w-full max-w-[95%] sm:max-w-lg max-h-[90vh] overflow-y-auto rounded-[32px] shadow-2xl border border-white animate-in zoom-in-95 duration-300 custom-scrollbar">
+                        <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-[#F8FAFC]">
+                            <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight">{t('editRecord') || 'Editar Registro'}</h3>
+                            <button onClick={() => { setShowEditModal(false); setEditingTransaction(null); }} className="p-2 hover:bg-slate-200 rounded-full transition-colors text-slate-400">&times;</button>
+                        </div>
+                        <form onSubmit={async (e) => {
+                            e.preventDefault();
+                            const { description, amount, type, category, paymentMethod, clientName, status } = (e.target as any).elements;
+                            await updateTransaction(editingTransaction.id, {
+                                description: description.value,
+                                clientName: clientName.value,
+                                amount: parseFloat(amount.value),
+                                type: type.value,
+                                category: category.value,
+                                status: status.value,
+                                paymentMethod: paymentMethod.value
+                            });
+                            setShowEditModal(false);
+                            setEditingTransaction(null);
+                        }} className="p-8 space-y-5">
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{t('type')}</label>
+                                    <select name="type" defaultValue={editingTransaction.type} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold focus:ring-2 focus:ring-[#FF4700]/20 outline-none">
+                                        <option value="income">{t('income')} (+)</option>
+                                        <option value="expense">{t('expense')} (-)</option>
+                                    </select>
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{t('status')}</label>
+                                    <select name="status" defaultValue={editingTransaction.status} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold focus:ring-2 focus:ring-[#FF4700]/20 outline-none">
+                                        <option value="paid">{t('paid')}</option>
+                                        <option value="pending">{t('pending')}</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{t('category')}</label>
+                                    <input name="category" defaultValue={editingTransaction.category} placeholder={t('categoryExample')} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold focus:ring-2 focus:ring-[#FF4700]/20 outline-none" required />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{t('value')} (MT)</label>
+                                    <input name="amount" defaultValue={editingTransaction.amount} type="number" step="0.01" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold focus:ring-2 focus:ring-[#FF4700]/20 outline-none" required />
+                                </div>
+                            </div>
+                            <div className="space-y-2">
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{t('description')}</label>
+                                <input name="description" defaultValue={editingTransaction.description} placeholder={t('descPlaceholder')} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold focus:ring-2 focus:ring-[#FF4700]/20 outline-none" required />
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{t('clientNameOpt')}</label>
+                                    <input name="clientName" defaultValue={editingTransaction.clientName || ''} placeholder={t('clientExample')} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold focus:ring-2 focus:ring-[#FF4700]/20 outline-none" />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{t('method')}</label>
+                                    <select name="paymentMethod" defaultValue={editingTransaction.paymentMethod || 'cash'} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold focus:ring-2 focus:ring-[#FF4700]/20 outline-none">
+                                        <option value="cash">{t('cash')}</option>
+                                        <option value="transfer">{t('transfer')}</option>
+                                        <option value="card">{t('card')}</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <button type="submit" className="w-full py-5 bg-slate-900 text-white font-black rounded-2xl hover:bg-black transition-all shadow-xl uppercase tracking-widest mt-4">{t('saveChanges') || 'Salvar Alterações'}</button>
+                        </form>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
